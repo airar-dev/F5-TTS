@@ -144,13 +144,67 @@ class Trainer:
             else:
                 self.accelerator.save(checkpoint, f"{self.checkpoint_path}/model_{step}.pt")
 
+    # def load_checkpoint(self):
+    #     if (
+    #         not exists(self.checkpoint_path)
+    #         or not os.path.exists(self.checkpoint_path)
+    #         or not os.listdir(self.checkpoint_path)
+    #     ):
+    #         return 0
+
+    #     self.accelerator.wait_for_everyone()
+    #     if "model_last.pt" in os.listdir(self.checkpoint_path):
+    #         latest_checkpoint = "model_last.pt"
+    #     else:
+    #         latest_checkpoint = sorted(
+    #             [f for f in os.listdir(self.checkpoint_path) if f.endswith(".pt")],
+    #             key=lambda x: int("".join(filter(str.isdigit, x))),
+    #         )[-1]
+    #     # checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", map_location=self.accelerator.device)  # rather use accelerator.load_state ಥ_ಥ
+    #     checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", weights_only=True, map_location="cpu")
+
+    #     # patch for backward compatibility, 305e3ea
+    #     for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_spec.mel_stft.spectrogram.window"]:
+    #         if key in checkpoint["ema_model_state_dict"]:
+    #             del checkpoint["ema_model_state_dict"][key]
+
+    #     if self.is_main:
+    #         self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"])
+
+    #     if "step" in checkpoint:
+    #         # patch for backward compatibility, 305e3ea
+    #         for key in ["mel_spec.mel_stft.mel_scale.fb", "mel_spec.mel_stft.spectrogram.window"]:
+    #             if key in checkpoint["model_state_dict"]:
+    #                 del checkpoint["model_state_dict"][key]
+
+    #         self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+    #         self.accelerator.unwrap_model(self.optimizer).load_state_dict(checkpoint["optimizer_state_dict"])
+    #         if self.scheduler:
+    #             self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    #         step = checkpoint["step"]
+    #     else:
+    #         checkpoint["model_state_dict"] = {
+    #             k.replace("ema_model.", ""): v
+    #             for k, v in checkpoint["ema_model_state_dict"].items()
+    #             if k not in ["initted", "step"]
+    #         }
+    #         self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+    #         step = 0
+
+        
+    #     del checkpoint
+    #     gc.collect()
+    #     return step
     def load_checkpoint(self):
         if (
             not exists(self.checkpoint_path)
             or not os.path.exists(self.checkpoint_path)
             or not os.listdir(self.checkpoint_path)
         ):
+            print("$$$$ Checkpoint path does not exist or is empty.")
             return 0
+        
+        print("$$$$ Checkpoint path is valid and contains files.")  # 추가 디버깅 로그
 
         self.accelerator.wait_for_everyone()
         if "model_last.pt" in os.listdir(self.checkpoint_path):
@@ -160,8 +214,21 @@ class Trainer:
                 [f for f in os.listdir(self.checkpoint_path) if f.endswith(".pt")],
                 key=lambda x: int("".join(filter(str.isdigit, x))),
             )[-1]
-        # checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", map_location=self.accelerator.device)  # rather use accelerator.load_state ಥ_ಥ
-        checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", weights_only=True, map_location="cpu")
+        
+        # Checkpoint 로드 경로 출력
+        checkpoint_path = f"{self.checkpoint_path}/{latest_checkpoint}"
+        print(f"Loading checkpoint from: {checkpoint_path}")
+        
+        # checkpoint 로드
+        checkpoint = torch.load(checkpoint_path, weights_only=True, map_location="cpu")
+
+        # 특정 키가 존재할 경우 텐서 크기 출력
+        embed_key = "ema_model.transformer.text_embed.text_embed.weight"
+        if embed_key in checkpoint["ema_model_state_dict"]:
+            print(f"$$$$ Checkpoint tensor size for {embed_key}: {checkpoint['ema_model_state_dict'][embed_key].size()}")
+        if hasattr(self.ema_model, 'transformer') and hasattr(self.ema_model.transformer, 'text_embed'):
+            current_size = self.ema_model.transformer.text_embed.text_embed.weight.size()
+            print(f"Current model tensor size for {embed_key}: {current_size}")
 
         # patch for backward compatibility, 305e3ea
         for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_spec.mel_stft.spectrogram.window"]:
@@ -169,7 +236,11 @@ class Trainer:
                 del checkpoint["ema_model_state_dict"][key]
 
         if self.is_main:
-            self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"])
+            try:
+                self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"])
+            except RuntimeError as e:
+                print(f"Error loading EMA state_dict: {e}")
+                raise
 
         if "step" in checkpoint:
             # patch for backward compatibility, 305e3ea
@@ -194,6 +265,8 @@ class Trainer:
         del checkpoint
         gc.collect()
         return step
+   
+
 
     def train(self, train_dataset: Dataset, num_workers=16, resumable_with_seed: int = None):
         if self.log_samples:
