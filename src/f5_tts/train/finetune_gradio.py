@@ -382,6 +382,8 @@ def start_training(
     stream=False,
     logger="wandb",
 ):
+    # 경로 로그 출력
+    print(f"Checkpoint path for training: {file_checkpoint_train}")
     global training_process, tts_api, stop_signal, pipe
 
     if tts_api is not None or pipe is not None:
@@ -451,7 +453,7 @@ def start_training(
         cmd += f" --finetune {finetune}"
 
     if file_checkpoint_train != "":
-        cmd += f" --file_checkpoint_train {file_checkpoint_train}"
+        cmd += f" --pretrain {file_checkpoint_train}"
 
     if tokenizer_file != "":
         cmd += f" --tokenizer_path {tokenizer_file}"
@@ -1055,8 +1057,7 @@ def expand_model_embeddings(ckpt_path, new_ckpt_path, num_new_tokens=42):
 def vocab_count(text):
     return str(len(text.split(",")))
 
-
-def vocab_extend(project_name, symbols, model_type):
+def vocab_extend(project_name, symbols, model_type, custom_pt_path=""):
     if symbols == "":
         return "Symbols empty!"
 
@@ -1097,10 +1098,14 @@ def vocab_extend(project_name, symbols, model_type):
     with open(file_vocab_project, "w", encoding="utf-8") as f:
         f.write("\n".join(vocab))
 
-    if model_type == "F5-TTS":
-        ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
+    # 수정된 부분: 사용자 입력 경로를 사용할 수 있도록 함
+    if custom_pt_path:
+        ckpt_path = custom_pt_path
     else:
-        ckpt_path = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.pt"))
+        if model_type == "F5-TTS":
+            ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
+        else:
+            ckpt_path = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.pt"))
 
     vocab_size_new = len(miss_symbols)
 
@@ -1113,6 +1118,64 @@ def vocab_extend(project_name, symbols, model_type):
 
     vocab_new = "\n".join(miss_symbols)
     return f"vocab old size : {size_vocab}\nvocab new size : {size}\nvocab add : {vocab_size_new}\nnew symbols :\n{vocab_new}"
+
+# def vocab_extend(project_name, symbols, model_type):
+#     if symbols == "":
+#         return "Symbols empty!"
+
+#     name_project = project_name
+#     path_project = os.path.join(path_data, name_project)
+#     file_vocab_project = os.path.join(path_project, "vocab.txt")
+
+#     file_vocab = os.path.join(path_data, "Emilia_ZH_EN_pinyin/vocab.txt")
+#     if not os.path.isfile(file_vocab):
+#         return f"the file {file_vocab} not found !"
+
+#     symbols = symbols.split(",")
+#     if symbols == []:
+#         return "Symbols to extend not found."
+
+#     with open(file_vocab, "r", encoding="utf-8-sig") as f:
+#         data = f.read()
+#         vocab = data.split("\n")
+#     vocab_check = set(vocab)
+
+#     miss_symbols = []
+#     for item in symbols:
+#         item = item.replace(" ", "")
+#         if item in vocab_check:
+#             continue
+#         miss_symbols.append(item)
+
+#     if miss_symbols == []:
+#         return "Symbols are okay no need to extend."
+
+#     size_vocab = len(vocab)
+#     vocab.pop()
+#     for item in miss_symbols:
+#         vocab.append(item)
+
+#     vocab.append("")
+
+#     with open(file_vocab_project, "w", encoding="utf-8") as f:
+#         f.write("\n".join(vocab))
+
+#     if model_type == "F5-TTS":
+#         ckpt_path = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"))
+#     else:
+#         ckpt_path = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.pt"))
+
+#     vocab_size_new = len(miss_symbols)
+
+#     dataset_name = name_project.replace("_pinyin", "").replace("_char", "")
+#     new_ckpt_path = os.path.join(path_project_ckpts, dataset_name)
+#     os.makedirs(new_ckpt_path, exist_ok=True)
+#     new_ckpt_file = os.path.join(new_ckpt_path, "model_1200000.pt")
+
+#     size = expand_model_embeddings(ckpt_path, new_ckpt_file, num_new_tokens=vocab_size_new)
+
+#     vocab_new = "\n".join(miss_symbols)
+#     return f"vocab old size : {size_vocab}\nvocab new size : {size}\nvocab add : {vocab_size_new}\nnew symbols :\n{vocab_new}"
 
 
 def vocab_check(project_name):
@@ -1467,14 +1530,21 @@ Using the extended model, you can finetune to a new language that is missing sym
                 )
                 txt_count_symbol = gr.Textbox(label="New Vocab Size", value="", scale=1)
 
+            with gr.Row():
+                txt_custom_pt_path = gr.Textbox(label="Path to Custom .pt File", placeholder="Enter custom .pt file path (optional)")
+
+
             extend_button = gr.Button("Extend")
             txt_info_extend = gr.Text(label="Info", value="")
 
             txt_extend.change(vocab_count, inputs=[txt_extend], outputs=[txt_count_symbol])
             check_button.click(fn=vocab_check, inputs=[cm_project], outputs=[txt_info_check, txt_extend])
+            # extend_button.click(
+            #     fn=vocab_extend, inputs=[cm_project, txt_extend, exp_name_extend], outputs=[txt_info_extend]
+            # )
             extend_button.click(
-                fn=vocab_extend, inputs=[cm_project, txt_extend, exp_name_extend], outputs=[txt_info_extend]
-            )
+                  fn=vocab_extend, inputs=[cm_project, txt_extend, exp_name_extend, txt_custom_pt_path], outputs=[txt_info_extend]
+)
 
         with gr.TabItem("Prepare Data"):
             gr.Markdown("""```plaintext 
